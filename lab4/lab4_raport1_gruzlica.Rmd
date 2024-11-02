@@ -1,0 +1,131 @@
+---
+title: "Report 1_gruzlica"
+author: "Joanna Neubauer"
+date: "2024-10-28"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Setup
+During setup, libraries:
+
+- devtools
+- dplyr 
+- ggplot2
+- EDWAR
+
+are installed and necessary data is downloaded and cached.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r setup_libs, echo=FALSE, message=FALSE}
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+library(dplyr)
+library(ggplot2)
+theme_set(theme_minimal())
+devtools::install_github("rstudio/EDAWR")
+library(EDAWR)
+```
+
+```{r setup_cache, echo=FALSE, message=FALSE}
+df <- tb
+```
+
+
+## Data Summary
+
+Data consists of 3 800 records specifying country,	year,	sex and number of sick people for every age group(child, adult,	elderly). 
+
+The period of time the data covers is from 1995 to 2013. 
+
+100 countries are taken into consideration.
+
+
+```{r data_summary }
+knitr::kable(summary(df))
+```
+
+#### Example Data
+```{r data_summary_head }
+knitr::kable(head(df, 10))
+
+length(unique(df$country))
+```
+
+
+## Number of sick people per gender
+
+Below summary shows the number of sick people, based on their sex and regardless of their age. It takes information though all the years and from all the countries.
+
+```{r sick_per_gender, echo=FALSE, message=FALSE}
+changed_df <- df %>%
+  select(-(country:year)) %>%
+  group_by(sex) %>%
+  summarise(summed = sum(child, na.rm = TRUE) + sum(adult, na.rm = TRUE) + sum(elderly, na.rm = TRUE))
+
+knitr::kable(changed_df)
+
+ggplot(changed_df, aes(x = sex, y = summed, fill = sex)) +
+  geom_col() 
+```
+
+
+## Sickness every year
+
+Data is shown for children, adults and elderly people over the years.
+
+```{r sickess_by_year, echo=FALSE}
+sickness_by_year_df <- df %>%
+  select(-country) %>%
+  group_by(year) %>%
+  summarise(sum_child = sum(child, na.rm = TRUE),
+            sum_adult = sum(adult, na.rm = TRUE),
+            sum_elderly = sum(elderly, na.rm = TRUE))
+
+knitr::kable(sickness_by_year_df)
+
+ggplot(sickness_by_year_df, aes(x = year)) +
+  geom_line(aes(y = sum_child, color = 'Child')) +
+  geom_line(aes(y = sum_adult, color = 'Adult')) +
+  geom_line(aes(y = sum_elderly, color = 'Elderly')) +
+  labs(y = "No of sick people")
+```
+
+## Sickness every year by country
+
+The data is shown for single country, picturing number of sick people over the years. All with age group distinction.
+
+```{r sickness_by_year_by_country, echo=FALSE, message=FALSE}
+countries <- unique(df$country)
+
+sickness_by_year_df <- df %>%
+  group_by(country, year) %>%
+  summarise(
+    sum_child = sum(child, na.rm = TRUE),
+    sum_adult = sum(adult, na.rm = TRUE),
+    sum_elderly = sum(elderly, na.rm = TRUE)
+  )
+
+for (c in countries) {
+  df_country <- filter(sickness_by_year_df, country == c)
+  
+  plot_country <- ggplot(df_country, aes(x = year)) +
+    geom_line(aes(y = sum_child, color = 'Child')) +
+    geom_line(aes(y = sum_adult, color = 'Adult')) +
+    geom_line(aes(y = sum_elderly, color = 'Elderly')) +
+    labs(y = "No of sick people", title=c)
+  
+  print(plot_country)
+  
+  df_country_summary <- df_country %>%
+    select(-year) %>%
+    summary() %>%
+    print
+}
+```
