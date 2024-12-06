@@ -1,0 +1,608 @@
+---
+title: "Materials_Project"
+author: "Joanna Neubauer"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+
+
+# Executive Summary
+This report provides an analysis of the battery materials dataset from the Materials Project. The analysis includes data loading, cleaning, and various statistical and graphical analyses to understand the properties and trends of battery materials.
+It also provides insight into the distribution of various attributes, correlations between them, and trends over different steps. Predictive analysis was also performed to estimate the gravimetric energy based on other attributes.
+
+## Load Required Libraries
+
+Load required libraries and ensure repeatability of results
+
+```{r libs, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(plotly)
+library(corrplot)
+library(caret)
+library(DT)
+library(patchwork)
+```
+
+```{r reproducibility, echo=FALSE, message=FALSE}
+theme_set(theme_minimal())
+set.seed(123)
+```
+
+## Load Data
+
+Load data with catching and handle missing data.
+
+```{r helper_functions, echo=FALSE}
+prettyTable <- function(table_df, round_digits=2) {
+    DT::datatable(table_df, style="bootstrap", filter = "top", rownames = FALSE, extensions = "Buttons", options = list(dom = 'Bfrtip', buttons = c('csv', 'excel', 'pdf', 'print'))) %>% formatRound(names(dplyr::select_if(table_df, is.numeric)), round_digits)
+}
+```
+
+```{r load_data, cache=TRUE}
+data <- na.omit(read.csv("mp_batteries.csv"))
+```
+
+# Dataset Size and Basic Statistics
+
+## Data contents
+This section introduces the dataset structure and its attributes, which describe battery properties from the Materials Project.
+
+### Attributes:
+
+- **Battery ID**: Battery identifier. 
+- **Battery Formula**: Chemical formula of the battery material. 
+- **Working Ion**: Main ion responsible for transporting charge in the battery. 
+- **Formula Charge**: Chemical formula of the battery material in the charged state. 
+- **Formula Discharge**: Chemical formula of the battery material in the discharged state. 
+- **Max Delta Volume**: Volume change (%) for a given voltage step using the formula: 
+
+    *max(charge, discharge)/min(charge, discharge) -1.*
+    
+- **Average Voltage**: Average voltage for each voltage step. 
+- **Gravimetric Capacity**: the amount of energy per unit mass *(mAh/g)*. 
+- **Volumetric Capacity**: the amount of energy per unit volume *(mAh/cm³)*. 
+- **Gravimetric Energy**: Energy density relative to the battery mass *(Wh/kg)*. 
+- **Volumetric Energy**: Energy density relative to the battery volume *(Wh/L)*. 
+- **Atomic Fraction Charge**: Atomic fraction of components in the charged state. 
+- **Atomic Fraction Discharge**: Atomic fraction of components in the discharged state. 
+- **Stability Charge**: Stability index of the material in the charged state. 
+- **Stability Discharge**: Stability index of the material in the discharged state. 
+- **Steps**: Number of distinct voltage steps from full charge to discharge, based on stable intermediate states. 
+- **Max Voltage Step**: Maximum absolute difference between adjacent voltage steps.
+
+### Example data
+
+Sample data obtained by stepping over the whole dataset.
+
+```{r exapl_data, echo=FALSE}
+sampled_data <- data %>% slice(seq(1, n(), by = 20))
+prettyTable(sampled_data)
+```
+
+## Summary
+
+Dimensions of the data:
+
+```{r dataset, warning=FALSE, paged.print=TRUE, echo=FALSE}
+cat("Number of rows:", nrow(data), "\n")
+cat("Number of columns:", ncol(data), "\n")
+
+```
+
+### Non-numeric columns
+
+```{r dataset2_non, echo=FALSE}
+non_numeric_data <- select_if(data, ~ !is.numeric(.))
+
+non_numeric_data %>%
+  summary() %>%
+  knitr::kable()
+```
+
+Number of distinct values for column:
+
+```{r dataset2_non2, echo=FALSE}
+non_numeric_data %>%
+  summarise_all(~ n_distinct(.)) %>%
+  knitr::kable()
+```
+
+### Numeric columns
+
+The numerical attributes are summarized with statistical values. They are crucial because they provide insights into the dataset's characteristics:
+
+- **Min and Max Values**: Show the range of data, helping identify outliers and understand the limits of the dataset (e.g., minimum and maximum energy capacities).
+- **Median**: Represents the middle value, giving an idea of the dataset's central tendency, even in the presence of skewed data.
+- **Mean**: Indicates the average, useful for comparing datasets and understanding typical performance metrics like energy capacity.
+- **1st Qu** (1st Quartile): Represents the 25th percentile of the data. It shows the value below which the lower 25% of the data falls, helping identify the boundary for lower-performing materials or outliers.
+- **3rd Qu** (3rd Quartile): Represents the 75th percentile of the data. It shows the value below which the upper 75% of the data falls, indicating the range of higher-performing materials.
+
+Together, these quartiles define the interquartile range (IQR):
+
+    ***IQR=Q3−Q1***
+, which measures the spread of the middle 50% of data.
+
+These metrics enable researchers to assess the dataset's diversity, identify potential data issues, and focus on areas of interest such as high-capacity or stable materials.
+
+
+
+```{r dataset2, echo=FALSE}
+numeric_cols <- select_if(data, ~ is.numeric(.))
+
+numeric_cols %>%
+  summary() %>%
+  knitr::kable()
+```
+
+Below is the visualization of distribution of values. The *X* axis shows the specific value, while the *Y* axis shows how frequently the value was used.
+
+```{r dataset3, echo=FALSE, fig.height=30, fig.width=16}
+numeric_cols %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+    geom_histogram(bins = 30, fill = "blue", color = "black") +
+    facet_wrap(~ variable, scales = "free", ncol = 2) +
+    labs(title = "Distributions of Numeric Variables", x = "Value", y = "Frequency") +
+    theme(
+      axis.text = element_text(size = 13),
+      axis.title = element_text(size = 15),
+      plot.title = element_text(size = 17, face = "bold"),
+      strip.text = element_text(size = 16))
+```
+
+The series of distribution plots represent the frequency of numeric variables in the dataset.
+
+1. Atomic Fraction Charge - most values cluster near 0, indicating that a small fraction of atoms are typically involved in the charged state.
+
+2. Atomic Fraction Discharge - similar to the charge plot, values are concentrated near 0, with some variability, suggesting comparable atom fractions in discharged states.
+
+3. Average Voltage - distribution is centered around a low voltage range. Most materials have an average voltage close to a specific value (around 5V), crucial for identifying materials suitable for practical applications.
+
+4. Gravimetric Capacity - most values are concentrated on the lower end indicating, that the majority of materials have low gravimetric capacities, but there are a few with very high capacities.
+
+5. Gravimetric Energy - most values are clustered on the lower end, highlights that most materials have low energy densities, with few exceptions.
+
+6. Max Delta Volume - sharp peak near 0 suggests minimal volume changes for most materials. This is a critical property for materials stability during charge/discharge cycles.
+
+7. Max Voltage Step - values are concentrated at lower levels, indicating small voltage changes are common. Larger voltage steps are less frequent, likely limited to a few specialized materials.
+
+8. Stability Charge - Peaks near a certain value with a right-skewed tail. Most materials are stable in their charged states.
+
+9. Stability Discharge: Similar to stability in charge, indicating general stability consistency across charged and discharged states.
+
+10. Steps - Most materials exhibit 1–2 voltage steps during charge/discharge cycles. Few materials have higher steps, possibly indicating more complex phase transformations.
+
+11. Volumetric Capacity - distribution is similar to gravimetric capacity. Most materials have low volumetric capacities, with outliers at the higher end.
+
+12. Volumetric Energy - Majority of materials have low volumetric energy density, with a small number of high-performing outliers.
+
+    
+#### General Observations:
+
+  - Most distributions are right-skewed, showing that the dataset contains a few high-performance outliers in terms of capacity, energy, and stability.
+  - Variables like Max Delta Volume and Steps highlight materials with minimal structural or phase complexity.
+  
+#### Desired Values for chosen attributes:
+
+- Gravimetric Capacity:	High
+- Volumetric Capacity:	High
+- Gravimetric Energy Density:	High
+- Volumetric Energy Density:	High
+- Stability (Charge):	High
+- Stability (Discharge):	High
+- Average Voltage:	High
+- Max. Delta Volume:	Low
+
+# Attribute Value Analisis based on Working Ion
+
+The analysis emphasizes how the choice of working ion affects material selection and overall device performance.
+
+##  Min, max and average values of every attribute for Working Ion
+
+```{r helper_func, echo=FALSE, warning=FALSE}
+create_plot <- function(column_name) {
+  ggplot(working_ion_summary, aes_string(x = "reorder(Working.Ion, -count)", y = paste0("avg_", column_name))) +
+    geom_point(size = 3) +
+    geom_errorbar(aes_string(ymin = paste0("min_", column_name), ymax = paste0("max_", column_name)), width = 0.2, color = "red") +
+    labs(title = column_name, x = element_blank(), y = element_blank()) +
+    #expand_limits(y = c(min(working_ion_summary[[paste0("min_", column_name)]]), max(working_ion_summary[[paste0("max_", column_name)]]))) 
+    theme(
+      axis.text = element_text(size = 13),
+      plot.title = element_text(size = 16, face = "bold"))
+  
+  #ggplotly(p)
+}
+
+
+working_ion_summary <- data %>%
+  group_by(Working.Ion) %>%
+  summarise(
+    count = n(),
+    avg_Average.Voltage = mean(Average.Voltage, na.rm = TRUE),
+    max_Average.Voltage = max(Average.Voltage, na.rm = TRUE),
+    min_Average.Voltage = min(Average.Voltage, na.rm = TRUE),
+    avg_Gravimetric.Capacity = mean(Gravimetric.Capacity, na.rm = TRUE),
+    max_Gravimetric.Capacity = max(Gravimetric.Capacity, na.rm = TRUE),
+    min_Gravimetric.Capacity = min(Gravimetric.Capacity, na.rm = TRUE),
+    avg_Gravimetric.Energy = mean(Gravimetric.Energy, na.rm = TRUE),
+    max_Gravimetric.Energy = max(Gravimetric.Energy, na.rm = TRUE),
+    min_Gravimetric.Energy = min(Gravimetric.Energy, na.rm = TRUE),
+    avg_Atomic.Fraction.Charge = mean(Atomic.Fraction.Charge, na.rm = TRUE),
+    max_Atomic.Fraction.Charge = max(Atomic.Fraction.Charge, na.rm = TRUE),
+    min_Atomic.Fraction.Charge = min(Atomic.Fraction.Charge, na.rm = TRUE),
+    avg_Atomic.Fraction.Discharge = mean(Atomic.Fraction.Discharge, na.rm = TRUE),
+    max_Atomic.Fraction.Discharge = max(Atomic.Fraction.Discharge, na.rm = TRUE),
+    min_Atomic.Fraction.Discharge = min(Atomic.Fraction.Discharge, na.rm = TRUE),
+    avg_Max.Delta.Volume = mean(Max.Delta.Volume, na.rm = TRUE),
+    max_Max.Delta.Volume = max(Max.Delta.Volume, na.rm = TRUE),
+    min_Max.Delta.Volume = min(Max.Delta.Volume, na.rm = TRUE),
+    avg_Max.Voltage.Step = mean(Max.Voltage.Step, na.rm = TRUE),
+    max_Max.Voltage.Step = max(Max.Voltage.Step, na.rm = TRUE),
+    min_Max.Voltage.Step = min(Max.Voltage.Step, na.rm = TRUE),
+    avg_Stability.Charge = mean(Stability.Charge, na.rm = TRUE),
+    max_Stability.Charge = max(Stability.Charge, na.rm = TRUE),
+    min_Stability.Charge = min(Stability.Charge, na.rm = TRUE),
+    avg_Stability.Discharge = mean(Stability.Discharge, na.rm = TRUE),
+    max_Stability.Discharge = max(Stability.Discharge, na.rm = TRUE),
+    min_Stability.Discharge = min(Stability.Discharge, na.rm = TRUE),
+    avg_Steps = mean(Steps, na.rm = TRUE),
+    max_Steps = max(Steps, na.rm = TRUE),
+    min_Steps = min(Steps, na.rm = TRUE),
+    avg_Volumetric.Capacity = mean(Volumetric.Capacity, na.rm = TRUE),
+    max_Volumetric.Capacity = max(Volumetric.Capacity, na.rm = TRUE),
+    min_Volumetric.Capacity = min(Volumetric.Capacity, na.rm = TRUE),
+    avg_Volumetric.Energy = mean(Volumetric.Energy, na.rm = TRUE),
+    max_Volumetric.Energy = max(Volumetric.Energy, na.rm = TRUE),
+    min_Volumetric.Energy = min(Volumetric.Energy, na.rm = TRUE)
+  ) %>%
+  arrange(desc(count))
+
+```
+
+```{r working_ion_stat, echo=FALSE}
+transposed_df <- as.data.frame(t(working_ion_summary))
+colnames(transposed_df) <- transposed_df[1, ]
+transposed_df <- transposed_df[-1, ]
+
+knitr::kable(transposed_df)
+```
+
+## Visualization
+
+### Distribution of attributes for each Working Ion:
+
+```{r working_ion_stat3, echo=FALSE}
+ggplot(working_ion_summary, aes(x = "", y = count, fill = reorder(Working.Ion, count))) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(title = "Number of Entries by Working Ion", fill = "Working Ion", x = element_blank(), y = element_blank())
+```
+
+### Min, max and average values for every attribute
+
+The image presents a series of 12 plots, each focusing on a specific property related to battery materials. The x-axis in each plot represents different Working Ions. The y-axis in each plot displays a numerical value corresponding to the property being measured. The average value of the attribute is shown on the plot, along with max and min values of this attribute.
+
+```{r working_ion_stat2, echo=FALSE, warning=FALSE, fig.height=30, fig.width=17}
+# fig.height=30, fig.width=17, 
+#fig.height=15, fig.width=10
+plots <- lapply(names(numeric_cols), create_plot)
+wrap_plots(plots, ncol = 2)
+#subplot(plots, nrows = ceiling(length(plots) / 2), shareX = TRUE, shareY = TRUE)
+```
+
+
+# Correlation Analysis
+
+##### Correlation Coefficient (r):
+
+- The correlation coefficient ranges from -1 to 1.
+- r = 1: Perfect positive correlation. As one variable increases, the other variable also increases.
+- r = -1: Perfect negative correlation. As one variable increases, the other variable decreases.
+- r = 0: No correlation. There is no linear relationship between the variables.
+- 0 < r < 1: Positive correlation. The variables tend to increase together.
+- -1 < r < 0: Negative correlation. One variable tends to decrease as the other increases.
+
+##### Strength of the Correlation:
+
+- 0.9 to 1.0 (or -0.9 to -1.0): Very strong correlation.
+- 0.7 to 0.9 (or -0.7 to -0.9): Strong correlation.
+- 0.5 to 0.7 (or -0.5 to -0.7): Moderate correlation.
+- 0.3 to 0.5 (or -0.3 to -0.5): Weak correlation.
+- 0.0 to 0.3 (or -0.0 to -0.3): Very weak or no correlation.
+
+##### Significance:
+
+The significance of the correlation can be tested using a p-value. A low p-value (typically < 0.05) indicates that the correlation is statistically significant.
+
+```{r correlation, echo=FALSE}
+cor_matrix <- cor(data %>% select_if(is.numeric))
+corrplot(cor_matrix, method = "circle", type = "upper", tl.col = "black")
+```
+
+```{r plot_corelation, echo=FALSE, message=FALSE}
+create_correlation_plot <- function(data, x, y) {
+  ggplot(data, aes_string(x = x, y = y)) +
+    geom_point() +
+    geom_smooth(method = "lm", col = "red") +
+    labs(title = str_wrap(paste("Correlation between", x, "and", y), width = 50),
+         x = x,
+         y = y) +
+    theme(
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      plot.title = element_text(size = 16, face = "bold")
+    )
+  
+  #ggplotly(p)
+}
+```
+
+## Gravimetric Energy and Volumetric Energy
+
+```{r correlation_check1, echo=FALSE, message=FALSE}
+correlation <- cor(data$Gravimetric.Energy, data$Volumetric.Energy, use = "complete.obs")
+print(paste("Correlation:", correlation))
+
+create_correlation_plot(data, "Gravimetric.Energy", "Volumetric.Energy")
+```
+
+## Gravimetric Capacity and Volumetric Capacity
+
+```{r correlation_check2, echo=FALSE, message=FALSE}
+correlation <- cor(data$Gravimetric.Capacity, data$Volumetric.Capacity, use = "complete.obs")
+print(paste("Correlation:", correlation))
+
+create_correlation_plot(data, "Gravimetric.Capacity", "Volumetric.Capacity")
+```
+
+## Stability Charge and Stability Discharge
+
+```{r correlation_check3, echo=FALSE, message=FALSE}
+correlation <- cor(data$Stability.Charge, data$Stability.Discharge, use = "complete.obs")
+print(paste("Correlation:", correlation))
+
+create_correlation_plot(data, "Stability.Charge", "Stability.Discharge")
+```
+
+## Gravimetric Capacity and Atomic Fraction Discharge
+
+```{r correlation_check5, echo=FALSE, message=FALSE}
+correlation <- cor(data$Gravimetric.Capacity, data$Atomic.Fraction.Discharge, use = "complete.obs")
+print(paste("Correlation:", correlation))
+
+create_correlation_plot(data, "Gravimetric.Capacity", "Atomic.Fraction.Discharge")
+```
+
+## Average Voltage and Gravimetric Energy
+
+```{r correlation_check6, echo=FALSE, message=FALSE}
+correlation <- cor(data$Average.Voltage, data$Gravimetric.Energy, use = "complete.obs")
+print(paste("Correlation:", correlation))
+
+create_correlation_plot(data, "Average.Voltage", "Gravimetric.Energy")
+```
+
+## Gravimetric Capacity, Volumetric Capacity and Atomic Fraction Discharge
+
+```{r correlation_check7, echo=FALSE, message=FALSE, fig.width=15}
+
+correlation <- cor(data$Gravimetric.Capacity, data$Volumetric.Capacity, use = "complete.obs")
+print(paste("Correlation between Gravimetric.Capacity and Volumetric.Capacity:", correlation))
+
+correlation <- cor(data$Atomic.Fraction.Discharge, data$Volumetric.Capacity, use = "complete.obs")
+print(paste("Correlation between Atomic.Fraction.Discharge and Volumetric.Capacity:", correlation))
+
+correlation <- cor(data$Atomic.Fraction.Discharge, data$Gravimetric.Capacity, use = "complete.obs")
+print(paste("Correlation between Atomic.Fraction.Discharge and Gravimetric.Capacity:", correlation))
+
+plot1 <- create_correlation_plot(data, "Gravimetric.Capacity", "Volumetric.Capacity")
+plot2 <- create_correlation_plot(data, "Atomic.Fraction.Discharge", "Volumetric.Capacity")
+plot3 <- create_correlation_plot(data, "Atomic.Fraction.Discharge", "Gravimetric.Capacity")
+
+#subplot(plot1, plot2, plot3, nrows = 1, shareX = TRUE, shareY = TRUE)
+plot1 + plot2 + plot3
+```
+
+Plot 1. Gravimetric Capacity vs. Volumetric Capacity:
+The points show a clear upward trend, indicating a *strong positive correlation*. This means that materials with higher Gravimetric Capacity tend to also have higher Volumetric Capacity.
+
+Plot 2. Atomic Fraction Discharge vs. Volumetric Capacity:
+The points exhibit a less pronounced upward trend compared to the previous plot. This suggests a *moderate positive correlation* between Atomic Fraction Discharge and Volumetric Capacity. Higher Atomic Fraction Discharge values tend to correspond to higher Volumetric Capacity, but the relationship is not as strong.
+
+Plot 3. Atomic Fraction Discharge vs. Gravimetric Capacity:
+The points are more scattered, indicating a **weaker positive correlation** between Atomic Fraction Discharge and Gravimetric Capacity. While there is still a slight tendency for higher Atomic Fraction Discharge values to correspond to higher Gravimetric Capacity, the relationship is not as pronounced as in the previous plots.
+
+### Reflections:
+Gravimetric and Volumetric Capacity: The strong positive correlation between these two variables highlights the importance of both factors in battery performance. Materials with high Gravimetric Capacity can store more charge per unit mass, while high Volumetric Capacity allows for compact battery designs.
+
+Atomic Fraction Discharge: The moderate to weak correlations between Atomic Fraction Discharge and the other two variables suggest that while it plays a role in battery performance, it may not be the sole determinant.
+
+    
+## Gravimetric Energy, Volumetric Energy and Average Voltage
+
+```{r correlation_check8, echo=FALSE, message=FALSE, fig.width=15}
+
+correlation <- cor(data$Gravimetric.Energy, data$Volumetric.Energy, use = "complete.obs")
+print(paste("Correlation between Gravimetric.Energy and Volumetric.Energy:", correlation))
+
+correlation <- cor(data$Average.Voltage, data$Gravimetric.Energy, use = "complete.obs")
+print(paste("Correlation between Average.Voltage and Gravimetric.Energy:", correlation))
+
+correlation <- cor(data$Average.Voltage, data$Volumetric.Energy, use = "complete.obs")
+print(paste("Correlation between Average.Voltage and Volumetric.Energy:", correlation))
+
+plot1 <- create_correlation_plot(data, "Gravimetric.Energy", "Volumetric.Energy")
+plot2 <- create_correlation_plot(data, "Average.Voltage", "Gravimetric.Energy")
+plot3 <- create_correlation_plot(data, "Average.Voltage", "Volumetric.Energy")
+
+plot1 + plot2 + plot3
+```
+
+Positive Correlations: All three scatter plots demonstrate positive correlations between the respective variables. This means that as one variable increases, the other also tends to increase.
+
+The strength of the correlations differs across the plots:
+Plot 1. Gravimetric Energy and Volumetric Energy:
+The strongest correlation exists between Gravimetric Energy and Volumetric Energy. This indicates a close relationship between these two attributes.
+
+Plot 2. Average Voltage and Gravimetric Energy:
+The correlation between Average Voltage and Gravimetric Energy is weaker than the previous one, suggesting a less direct relationship.
+
+Plot 3. Average Voltage and Volumetric Energy:
+The correlation between Average Voltage and Volumetric Energy is the weakest of the three, indicating a more limited influence of Average Voltage on Volumetric Energy.
+
+### Reflections:
+
+Gravimetric and Volumetric Energy: The strong positive correlation between these attributes highlights their critical roles in battery performance.
+
+Average Voltage: The weaker correlations between Average Voltage and the other two attributes indicate that, although it contributes to battery performance, it is likely not the only determining factor.
+
+
+# Trend Analisis
+```{r trend, echo=FALSE}
+ggplot(data, aes(x = Steps, y = Average.Voltage)) +
+  geom_line() +
+  labs(title = "Trend of Average Voltage over Steps", x = "Steps", y = "Average Voltage (V)")
+```
+
+The plot represents the trend of Average Voltage (V) over Steps for battery materials, which is vital for evaluating the long-term viability of the battery material under real-world conditions.
+
+The X-axis (Steps) indicates the sequence of operational steps applied to the battery material, while the Y-axis (Average Voltage) shows the average voltage output from the battery material during each step, reflecting its electrochemical performance.
+
+The gradual decline in average voltage over steps suggests that the material's performance decreases with usage. This could be due to material degradation, capacity fade, or an increase in internal resistance over time. At the same time, the trend becomes less steep as steps increase. It implyes that the rate of performance decline slows down after an initial phase. This could indicate the material reaching a more stable, albeit lower, voltage state.
+
+```{r trend2, echo=FALSE, fig.width=10}
+plot1 <- ggplot(data, aes(x = Steps, y = Gravimetric.Energy)) +
+  geom_line() +
+  labs(title = "Trend of Gravimetric Energy over Steps", x = "Steps", y = "Gravimetric Energy")
+
+plot2 <- ggplot(data, aes(x = Steps, y = Volumetric.Energy)) +
+  geom_line() +
+  labs(title = "Trend of Volumetric Energy over Steps", x = "Steps", y = "Volumetric Energy")
+
+plot1 + plot2
+```
+
+The plots show the trends of key attributes Gravimetric Energy and Volumetric Energy over Steps for battery materials. The X-axis (Steps) represents the sequence of testing stages and is the same for all three plots showcasing trends.
+
+### 1. Gravimetric Energy over Steps
+
+The Y-axis (Gravimetric Energy) shows the energy density of the material in terms of energy stored per unit mass (Wh/kg).
+
+Gravimetric Energy decreases progressively with an initial steep drop followed by smaller, oscillating decreases. This indicates the battery material is losing its ability to store energy effectively over successive steps. Oscillations could represent periodic changes in energy retention, possibly due to variations in testing conditions or recovery effects in the material.
+
+### 2. Volumetric Energy over Steps
+
+The Y-axis (Volumetric Energy) indicates the energy density of the material in terms of energy stored per unit volume (Wh/L).
+
+Similar to the Gravimetric Energy plot, Volumetric Energy shows a sharp initial decrease followed by a more gradual decline with oscillations. The larger range of Volumetric Energy values reflects differences in how compact the material stores energy compared to its mass.
+
+The decrease in Volumetric Energy suggests that the material's ability to deliver energy in a compact form diminishes with futher use.
+    
+        
+# Predictive Analisis
+
+## Gravimetric Energy Prediction
+```{r predictiove, echo=FALSE}
+model <- lm(Gravimetric.Energy ~ Average.Voltage + Max.Delta.Volume + Gravimetric.Capacity, data = data)
+summary(model)
+
+predictions <- data.frame(
+  Actual = data$Gravimetric.Energy,
+  Predicted = predict(model, data)
+)
+
+p <- ggplot(predictions, aes(x = Actual, y = Predicted)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Actual vs. Predicted Gravimetric Energy",
+       x = "Actual Gravimetric Energy (Wh/kg)",
+       y = "Predicted Gravimetric Energy (Wh/kg)") +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold")
+  )
+
+ggplotly(p)
+```
+
+The plot compares actual and predicted gravimetric energy values. Data points are clustered around a straight line, confirming a linear relationship between the variables. A few points deviate from the line, which may indicate outliers or the need to include additional variables in the model.
+
+### Results:
+- The model is statistically significant, as indicated by the p-value of the F-statistic, which is much smaller than 0.05.
+- The R-squared value of 0.5658 indicates that the model explains approximately 56.58% of the variability in gravimetric energy.
+- The residuals (differences between actual and predicted values) have a mean close to zero and a distribution that is approximately normal.
+
+Average Voltage, Maximum Volume Change, and Gravimetric Capacity significantly influence gravimetric energy. Increasing any of these variables leads to an increase in predicted gravimetric energy.
+
+    
+## Gravimetric Energy Prediction by Working Ion
+
+Below plots show Actual vs. Gravimetric Energy for each Working Ion. The axis are identical for every plot for the ease of compairing them. Please note that due to differences in scales, some of the max and min values are cut from present visualization.
+
+
+```{r pred_by_ion_function, echo=FALSE}
+create_predictive_plot <- function(data, ion) {
+  subset_data <- data %>% filter(Working.Ion == ion)
+  
+  model <- lm(Gravimetric.Energy ~ Average.Voltage + Max.Delta.Volume + Gravimetric.Capacity, data = subset_data)
+  print(paste("-----------", ion, "-----------\n"))
+  print(summary(model))
+  
+  predictions <- data.frame(
+    Actual = subset_data$Gravimetric.Energy,
+    Predicted = predict(model, subset_data)
+  )
+  
+  min_pred_value <- -500
+  max_pred_value <- 5000
+  min_actual_value <- -500
+  max_actual_value <- 4000
+  
+  #min_pred_value <- min(predictions$Predicted, na.rm = TRUE)
+  #max_pred_value <- max(predictions$Predicted, na.rm = TRUE)
+  #min_actual_value <- min(predictions$Actual, na.rm = TRUE)
+  #max_actual_value <- max(predictions$Actual, na.rm = TRUE)
+  
+  p <- ggplot(predictions, aes(x = Actual, y = Predicted)) +
+    geom_point() +
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+    labs(title = paste("Actual vs. Predicted Gravimetric Energy for", ion),
+         x = "Actual Gravimetric Energy (Wh/kg)",
+         y = "Predicted Gravimetric Energy (Wh/kg)") +
+    theme(
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      plot.title = element_text(size = 16, face = "bold")
+    ) +
+    expand_limits(x = c(min_actual_value, max_actual_value), y = c(min_pred_value, max_pred_value))
+  
+  ggplotly(p)
+}
+```
+
+```{r pred_by_ion, echo=FALSE}
+
+ions <- unique(data$Working.Ion)
+
+# workaround for printing interactive plots in loop
+plotlist = list()
+for (ion in ions) {
+    plotlist[[ion]] = create_predictive_plot(data, ion)
+}
+htmltools::tagList(setNames(plotlist, NULL))
+
+```
+
+### Overall Results Analysis
+
+For most ions, the data points cluster around the diagonal line of perfect prediction. This indicates that the model is generally capturing the underlying trends in the data. For some ions (e.g., Al, K, Ce), the model appears to have little difficulty with accurate predictions. At the same time, for diferent ions (e.g., Li, Rb, Ne) it has more difficulty capturing the variability. This suggests that the model's accuracy may vary depending on the specific ion.
+Additionaly, in certain cases, the data points might systematically deviate from the ideal line, indicating potential biases or systematic errors in the model or data.
+
+
